@@ -1,3 +1,9 @@
 # Godot 4+ specific ignores
 .godot/
 /android/
+
+# 自动化 / 临时产物
+tools/_*
+*.tmp
+shots/
+docs/screenshots/*.import
