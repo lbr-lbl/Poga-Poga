@@ -7,3 +7,7 @@ tools/_*
 *.tmp
 shots/
 docs/screenshots/*.import
+tools/.tts_cache/
+
+# 导出包（发布到 GitHub Releases，不进仓库）
+build/

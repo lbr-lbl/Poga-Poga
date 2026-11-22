@@ -1,323 +1,216 @@
 class_name MainMenu
 extends Control
-## 主菜单：选关、AI 难度、车手等级/经验、属性加点、操作说明。
+## 主菜单：老式游戏机标题画面（attract mode）。
 ##
-## 风格约定（与比赛 HUD / 结算统一）：
-## - 像素字体、纯灰度、直角细边框面板、统一的 30/20 字号层级；
-## - 顶部是身份区（标题 + 等级/经验），中部左右两栏，底部操作提示；
-## - 所有可交互元素都走 UiKit，选中态用 UiKit.set_button_selected()。
+## - 刚进入时只有标题 + 闪烁的 PRESS ENTER，没有任何选项；
+## - 按任意键/点击后选项才出现（PRESS ENTER 同时消失）；
+## - 隐藏操作：连续点击标题 7 下解锁全部赛段。
 
-signal level_selected(index: int)
+signal start_pressed()
+signal driver_pressed()
+signal help_pressed()
 signal quit_pressed()
 
-const LEVEL_BLURBS: Array[String] = [
-	"宽环形赛道：熟悉加速 / 滑行 / 转向 / 自动融合",
-	"上坡减速耗耐，下坡转向变难",
-	"树枝落叶小石子：碰撞掉耐、易散团",
-]
+const UNLOCK_CLICKS := 7
+const UNLOCK_RESET_TIME := 2.5
+const TITLE_FONT := 90
 
-var _level_buttons: Array[Button] = []
-var _level_labels: Array[Label] = []
-var _tier_buttons: Array[Button] = []
-var _stat_value_labels: Dictionary = {}
-var _upgrade_buttons: Dictionary = {}
-var _points_label: Label
-var _level_label: Label
-var _xp_bar: UiKit.PixBar
-var _xp_label: Label
-var _best_label: Label
+var _title: Label
+var _prompt: Label
+var _menu_box: VBoxContainer
+var _buttons: Array[Button] = []
+var _toast: Label
+var _footer: Label
+var _blink: float = 0.0
+var _toast_timer: float = 0.0
+var _title_clicks: int = 0
+var _title_timer: float = 0.0
+var _revealed: bool = false
+var _input_lock: float = 0.22
 
 
 func _ready() -> void:
-	set_anchors_preset(Control.PRESET_FULL_RECT)
-	_build()
-	refresh()
-	_focus_default()
+    set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+    _build()
+    _prompt.visible = true
+    _menu_box.visible = false
+    _menu_box.modulate = Color(1.0, 1.0, 1.0, 0.0)
+    _footer.visible = false
 
 
-func _focus_default() -> void:
-	# 键盘/手柄进入菜单时给一个默认焦点，避免只能用鼠标
-	for index: int in range(_level_buttons.size()):
-		if not _level_buttons[index].disabled:
-			_level_buttons[index].grab_focus()
-			return
+func _process(delta: float) -> void:
+    _blink += delta
+    if _input_lock > 0.0:
+        _input_lock = maxf(0.0, _input_lock - delta)
+    _prompt.modulate = Color(1.0, 1.0, 1.0, 0.55 + 0.45 * sin(_blink * 3.2))
+    if _title_timer > 0.0:
+        _title_timer -= delta
+        if _title_timer <= 0.0:
+            _title_clicks = 0
+    if _toast_timer > 0.0:
+        _toast_timer -= delta
+        if _toast_timer <= 0.0:
+            _toast.visible = false
+
+
+func _input(event: InputEvent) -> void:
+    if _revealed or _input_lock > 0.0:
+        return
+    # Esc 在标题画面不揭幕（避免误触），其它任意键/点击才进入菜单
+    if event.is_action_pressed("back"):
+        return
+    if event is InputEventKey:
+        if not (event as InputEventKey).pressed:
+            return
+    elif event is InputEventJoypadButton:
+        if not (event as InputEventJoypadButton).pressed:
+            return
+    elif event is InputEventMouseButton:
+        if not (event as InputEventMouseButton).pressed:
+            return
+    elif event is InputEventScreenTouch:
+        if not (event as InputEventScreenTouch).pressed:
+            return
+    else:
+        return
+    if event.is_action_pressed("back"):
+        return
+    _reveal()
+    get_viewport().set_input_as_handled()
+
+
+## 供截图/调试使用：直接显示选项。
+func reveal_now() -> void:
+    _reveal()
+
+
+func _reveal() -> void:
+    if _revealed:
+        return
+    _revealed = true
+    _prompt.visible = false
+    _menu_box.visible = true
+    _footer.visible = true
+    UiSfx.play("ui_confirm", -8.0)
+    var tween := create_tween()
+    tween.tween_property(_menu_box, "modulate", Color(1.0, 1.0, 1.0, 1.0), 0.22)
+    _buttons[0].grab_focus()
 
 
 func _build() -> void:
-	var background := ColorRect.new()
-	background.color = Color("090909")
-	background.set_anchors_preset(Control.PRESET_FULL_RECT)
-	background.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	add_child(background)
+    add_child(MenuBackdrop.new())
 
-	var decor := MenuDecor.new()
-	decor.set_anchors_preset(Control.PRESET_FULL_RECT)
-	decor.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	add_child(decor)
+    var margin := MarginContainer.new()
+    margin.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+    margin.add_theme_constant_override("margin_left", 60)
+    margin.add_theme_constant_override("margin_right", 60)
+    margin.add_theme_constant_override("margin_top", 36)
+    margin.add_theme_constant_override("margin_bottom", 24)
+    add_child(margin)
 
-	var margin := MarginContainer.new()
-	margin.set_anchors_preset(Control.PRESET_FULL_RECT)
-	margin.add_theme_constant_override("margin_left", 36)
-	margin.add_theme_constant_override("margin_right", 36)
-	margin.add_theme_constant_override("margin_top", 16)
-	margin.add_theme_constant_override("margin_bottom", 12)
-	add_child(margin)
+    var column := VBoxContainer.new()
+    column.add_theme_constant_override("separation", 6)
+    margin.add_child(column)
 
-	var column := VBoxContainer.new()
-	column.add_theme_constant_override("separation", 8)
-	margin.add_child(column)
+    var top := HBoxContainer.new()
+    column.add_child(top)
+    var player_tag := UiKit.label("1 PLAYER", UiKit.SIZE_SMALL, Tuning.COLOR_TEXT_DIM)
+    player_tag.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    top.add_child(player_tag)
 
-	column.add_child(_build_header())
-	column.add_child(UiKit.separator())
+    var spacer_top := Control.new()
+    spacer_top.size_flags_vertical = Control.SIZE_EXPAND_FILL
+    column.add_child(spacer_top)
 
-	var content := HBoxContainer.new()
-	content.add_theme_constant_override("separation", 18)
-	content.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	column.add_child(content)
-	content.add_child(_build_race_panel())
-	content.add_child(_build_driver_panel())
+    # 标题：描边 + 阴影，做出街机 LOGO 的厚度
+    _title = UiKit.label("POGA POGA", TITLE_FONT, Tuning.COLOR_ACCENT, HORIZONTAL_ALIGNMENT_CENTER)
+    _title.custom_minimum_size = Vector2(0.0, 110.0)
+    _title.add_theme_color_override("font_outline_color", Color(0.02, 0.02, 0.02, 1.0))
+    _title.add_theme_constant_override("outline_size", 10)
+    _title.add_theme_color_override("font_shadow_color", Color(0.12, 0.12, 0.12, 1.0))
+    _title.add_theme_constant_override("shadow_offset_x", 5)
+    _title.add_theme_constant_override("shadow_offset_y", 6)
+    _title.mouse_filter = Control.MOUSE_FILTER_STOP
+    _title.gui_input.connect(_on_title_input)
+    column.add_child(_title)
 
-	column.add_child(UiKit.separator())
-	var bottom := HBoxContainer.new()
-	column.add_child(bottom)
-	var hint := UiKit.label(
-		"W/↑ 加速    A D 转向    S/空格 刹车    松开滑行    R 重试    ESC 返回",
-		UiKit.SIZE_SMALL,
-		Tuning.COLOR_TEXT_DIM
-	)
-	hint.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	bottom.add_child(hint)
-	var quit := UiKit.button("退出游戏", UiKit.SIZE_SMALL, 14.0)
-	quit.custom_minimum_size = Vector2(140.0, 38.0)
-	quit.pressed.connect(_on_quit_pressed)
-	bottom.add_child(quit)
+    var spacer_prompt := Control.new()
+    spacer_prompt.size_flags_vertical = Control.SIZE_EXPAND_FILL
+    column.add_child(spacer_prompt)
 
+    # 初始的 PRESS ANY KEY（只在没有选项时出现）
+    _prompt = UiKit.label("轻触屏幕开始" if OS.has_feature("mobile") else "PRESS ANY KEY", UiKit.SIZE_BODY, Tuning.COLOR_TEXT, HORIZONTAL_ALIGNMENT_CENTER)
+    _prompt.custom_minimum_size = Vector2(0.0, 48.0)
+    column.add_child(_prompt)
 
-func _build_header() -> Control:
-	var row := HBoxContainer.new()
-	row.add_theme_constant_override("separation", 18)
+    # 选项（揭示后才出现）
+    _menu_box = VBoxContainer.new()
+    _menu_box.add_theme_constant_override("separation", 10)
+    _menu_box.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+    _menu_box.custom_minimum_size = Vector2(440.0, 0.0)
+    column.add_child(_menu_box)
 
-	var left := VBoxContainer.new()
-	left.add_theme_constant_override("separation", 2)
-	left.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	row.add_child(left)
-	left.add_child(UiKit.label("POGA POGA", 50, Tuning.COLOR_ACCENT))
-	left.add_child(UiKit.label("史莱姆融合竞速 · 最小可玩版本", UiKit.SIZE_SMALL, Tuning.COLOR_TEXT_DIM))
+    var names: Array[String] = ["开始游戏", "设置", "Poga", "退出游戏"]
+    var sounds: Array[String] = ["ui_confirm", "ui_click", "ui_click", "ui_back"]
+    for index: int in range(names.size()):
+        var button := UiKit.button(names[index], UiKit.SIZE_LARGE, 12.0, sounds[index])
+        button.custom_minimum_size = Vector2(440.0, 56.0)
+        button.alignment = HORIZONTAL_ALIGNMENT_CENTER
+        button.focus_entered.connect(_refresh_focus)
+        _menu_box.add_child(button)
+        _buttons.append(button)
+    _buttons[0].pressed.connect(_on_start_pressed)
+    _buttons[1].pressed.connect(_on_help_pressed)
+    _buttons[2].pressed.connect(_on_driver_pressed)
+    _buttons[3].pressed.connect(_on_quit_pressed)
 
-	var right := VBoxContainer.new()
-	right.add_theme_constant_override("separation", 6)
-	right.custom_minimum_size = Vector2(360.0, 0.0)
-	row.add_child(right)
+    _toast = UiKit.label("", UiKit.SIZE_BODY, Tuning.COLOR_ACCENT, HORIZONTAL_ALIGNMENT_CENTER)
+    _toast.visible = false
+    column.add_child(_toast)
 
-	var level_row := HBoxContainer.new()
-	level_row.add_theme_constant_override("separation", 10)
-	right.add_child(level_row)
-	_level_label = UiKit.label("Lv.0", 40, Tuning.COLOR_ACCENT)
-	_level_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	level_row.add_child(_level_label)
-	_best_label = UiKit.label("", UiKit.SIZE_SMALL, Tuning.COLOR_TEXT_DIM)
-	_best_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-	level_row.add_child(_best_label)
-
-	_xp_bar = UiKit.bar(16.0)
-	right.add_child(_xp_bar)
-	_xp_label = UiKit.label("", UiKit.SIZE_SMALL, Tuning.COLOR_TEXT_DIM)
-	right.add_child(_xp_label)
-	return row
+    var spacer_bottom := Control.new()
+    spacer_bottom.size_flags_vertical = Control.SIZE_EXPAND_FILL
+    column.add_child(spacer_bottom)
+    _footer = UiKit.label("轻触选择 · 点按确认" if OS.has_feature("mobile") else "↑↓ 选择     Enter 确认     Esc 返回     M 音乐静音", UiKit.SIZE_SMALL, Tuning.COLOR_TEXT_DIM, HORIZONTAL_ALIGNMENT_CENTER)
+    column.add_child(_footer)
+    _refresh_focus()
 
 
-func _build_race_panel() -> Control:
-	var panel := UiKit.panel(Tuning.COLOR_PANEL, UiKit.PANEL_BORDER_DIM, 14.0)
-	panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	var column := VBoxContainer.new()
-	column.add_theme_constant_override("separation", 8)
-	panel.add_child(column)
-
-	column.add_child(UiKit.label("比赛", UiKit.SIZE_BODY, Tuning.COLOR_TEXT))
-
-	# 对手强度（三段式选择）
-	var tier_row := HBoxContainer.new()
-	tier_row.add_theme_constant_override("separation", 8)
-	column.add_child(tier_row)
-	tier_row.add_child(UiKit.label("对手强度", UiKit.SIZE_SMALL, Tuning.COLOR_TEXT_DIM))
-	for tier: int in range(3):
-		var button := UiKit.button("", UiKit.SIZE_SMALL, 10.0)
-		button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		button.custom_minimum_size = Vector2(0.0, 36.0)
-		button.pressed.connect(_on_tier_pressed.bind(tier))
-		tier_row.add_child(button)
-		_tier_buttons.append(button)
-	column.add_child(UiKit.spacer(2))
-
-	var levels := LevelCatalog.all()
-	for i: int in range(levels.size()):
-		var button := UiKit.button("", UiKit.SIZE_SMALL, 14.0)
-		button.alignment = HORIZONTAL_ALIGNMENT_LEFT
-		button.custom_minimum_size = Vector2(0.0, 42.0)
-		button.pressed.connect(_on_level_pressed.bind(i))
-		column.add_child(button)
-		_level_buttons.append(button)
-
-		var caption := UiKit.label("", UiKit.SIZE_SMALL, Tuning.COLOR_TEXT_DIM)
-		caption.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-		caption.custom_minimum_size = Vector2(0.0, 20.0)
-		column.add_child(caption)
-		_level_labels.append(caption)
-	return panel
+func _refresh_focus() -> void:
+    for button: Button in _buttons:
+        UiKit.set_button_selected(button, button.has_focus(), 12.0)
 
 
-func _build_driver_panel() -> Control:
-	var panel := UiKit.panel(Tuning.COLOR_PANEL, UiKit.PANEL_BORDER_DIM, 14.0)
-	panel.custom_minimum_size = Vector2(400.0, 0.0)
-	var column := VBoxContainer.new()
-	column.add_theme_constant_override("separation", 8)
-	panel.add_child(column)
-
-	column.add_child(UiKit.label("车手", UiKit.SIZE_BODY, Tuning.COLOR_TEXT))
-	_points_label = UiKit.label("", UiKit.SIZE_SMALL, Tuning.COLOR_TEXT_DIM)
-	_points_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	column.add_child(_points_label)
-	column.add_child(UiKit.separator())
-	column.add_child(UiKit.label("属性", UiKit.SIZE_BODY, Tuning.COLOR_TEXT))
-
-	var definitions := [
-		{"key": "stamina", "name": "耐力", "desc": "上限/恢复"},
-		{"key": "speed", "name": "速度", "desc": "加速/极速"},
-		{"key": "stability", "name": "稳定", "desc": "抓地/抗散"},
-	]
-	for definition: Dictionary in definitions:
-		var key: String = definition["key"]
-		var row := HBoxContainer.new()
-		row.add_theme_constant_override("separation", 8)
-		var name_label := UiKit.label(str(definition["name"]), UiKit.SIZE_SMALL, Tuning.COLOR_TEXT)
-		name_label.custom_minimum_size = Vector2(48.0, 0.0)
-		row.add_child(name_label)
-		var desc_label := UiKit.label(str(definition["desc"]), UiKit.SIZE_SMALL, Tuning.COLOR_TEXT_DIM)
-		desc_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		row.add_child(desc_label)
-		var value_label := UiKit.label("0/5", UiKit.SIZE_SMALL, Tuning.COLOR_ACCENT)
-		value_label.custom_minimum_size = Vector2(44.0, 0.0)
-		value_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-		row.add_child(value_label)
-		var plus := UiKit.button("+", UiKit.SIZE_SMALL, 8.0)
-		plus.custom_minimum_size = Vector2(40.0, 30.0)
-		plus.pressed.connect(_on_upgrade_pressed.bind(key))
-		row.add_child(plus)
-		column.add_child(row)
-		_stat_value_labels[key] = value_label
-		_upgrade_buttons[key] = plus
-
-	column.add_child(UiKit.spacer(2))
-	var reset := UiKit.button("重置等级与加点", UiKit.SIZE_SMALL, 12.0)
-	reset.custom_minimum_size = Vector2(0.0, 36.0)
-	reset.pressed.connect(_on_reset_pressed)
-	column.add_child(reset)
-
-	var tip := UiKit.label("升级 +1 加点，属性等级 0→5", UiKit.SIZE_SMALL, Tuning.COLOR_TEXT_DIM)
-	column.add_child(tip)
-	return panel
+func _on_start_pressed() -> void:
+    start_pressed.emit()
 
 
-# ------------------------------------------------------------------ 事件
-
-func _on_level_pressed(index: int) -> void:
-	if index >= GameState.unlocked_levels:
-		return
-	level_selected.emit(index)
+func _on_help_pressed() -> void:
+    help_pressed.emit()
 
 
-func _on_tier_pressed(tier: int) -> void:
-	GameState.set_selected_tier(tier)
-	refresh()
+func _on_driver_pressed() -> void:
+    driver_pressed.emit()
 
 
 func _on_quit_pressed() -> void:
-	quit_pressed.emit()
+    quit_pressed.emit()
 
 
-func _on_upgrade_pressed(key: String) -> void:
-	if GameState.upgrade(key):
-		refresh()
-
-
-func _on_reset_pressed() -> void:
-	GameState.reset_level()
-	refresh()
-
-
-# ------------------------------------------------------------------ 刷新
-
-func refresh() -> void:
-	var levels := LevelCatalog.all()
-	for i: int in range(levels.size()):
-		var level: LevelDef = levels[i]
-		var unlocked := i < GameState.unlocked_levels
-		var button := _level_buttons[i]
-		var caption := _level_labels[i]
-		if unlocked:
-			button.text = "%s   %s   %d 圈" % [level.subtitle, level.display_name, level.total_laps]
-			button.disabled = false
-			var best_time: float = float(GameState.best_times[i])
-			var best_rank: int = int(GameState.best_ranks[i])
-			var record := ""
-			if best_time > 0.0:
-				record = "    最佳 %s" % GameState.format_time(best_time)
-				if best_rank > 0:
-					record += " · 第 %d 名" % best_rank
-			caption.text = LEVEL_BLURBS[i] + record
-		else:
-			button.text = "%s   %s   %d 圈   （未解锁）" % [level.subtitle, level.display_name, level.total_laps]
-			button.disabled = true
-			caption.text = "先赢下前一关即可解锁"
-
-	for tier: int in range(_tier_buttons.size()):
-		var button := _tier_buttons[tier]
-		var multiplier := GameState.AI_TIER_XP_COEF[tier]
-		button.text = "%s ×%.2f" % [GameState.AI_TIER_NAMES[tier], multiplier]
-		UiKit.set_button_selected(button, tier == GameState.selected_tier, 10.0)
-
-	_level_label.text = "Lv.%d" % GameState.level
-	_level_label.add_theme_color_override("font_color", Tuning.COLOR_ACCENT)
-	if GameState.level >= GameState.LEVEL_MAX:
-		_xp_bar.value = 1.0
-		_xp_label.text = "已达最高等级"
-	else:
-		_xp_bar.value = GameState.xp_progress()
-		_xp_label.text = "经验 %d / %d   ·   升级 +1 加点" % [GameState.xp, GameState.xp_to_next()]
-	_best_label.text = "战绩 %d 场 / %d 胜" % [GameState.total_races, GameState.total_wins]
-
-	_points_label.text = "可用加点 %d   ·   对手 %s ×%.2f" % [
-		GameState.available_points(),
-		GameState.AI_TIER_NAMES[GameState.selected_tier],
-		GameState.AI_TIER_XP_COEF[GameState.selected_tier],
-	]
-	for key: String in _stat_value_labels.keys():
-		var value_label: Label = _stat_value_labels[key]
-		value_label.text = "%d/%d" % [GameState.stat_level(key), GameState.STAT_MAX_LEVEL]
-		var plus: Button = _upgrade_buttons[key]
-		plus.disabled = not GameState.can_upgrade(key)
-
-
-func _unhandled_input(event: InputEvent) -> void:
-	if event.is_action_pressed("back"):
-		quit_pressed.emit()
-		get_viewport().set_input_as_handled()
-
-
-## 菜单背景：极简环形剪影（纯绘制，不依赖美术资源）。
-class MenuDecor:
-	extends Control
-
-	func _draw() -> void:
-		var center := size * Vector2(0.74, 0.5)
-		var radius := minf(size.x, size.y) * 0.46
-		var color := Color(0.15, 0.15, 0.15, 0.5)
-		draw_arc(center, radius, 0.0, TAU, 128, color, 54.0, false)
-		draw_arc(center, radius * 0.74, 0.0, TAU, 96, Color(0.10, 0.10, 0.10, 0.5), 10.0, false)
-		for i: int in range(160):
-			var angle := float(i) * 2.7
-			var distance := radius * (1.05 + 0.6 * fmod(float(i) * 0.37, 1.0))
-			var point := center + Vector2(cos(angle), sin(angle)) * distance
-			if point.x < 0.0 or point.y < 0.0 or point.x > size.x or point.y > size.y:
-				continue
-			draw_circle(point, 4.0 + fmod(float(i), 3.0) * 2.0, Color(0.08, 0.08, 0.08, 0.65))
+func _on_title_input(event: InputEvent) -> void:
+    if not (event is InputEventMouseButton):
+        return
+    var mouse: InputEventMouseButton = event
+    if not mouse.pressed or mouse.button_index != MOUSE_BUTTON_LEFT:
+        return
+    _title_clicks += 1
+    _title_timer = UNLOCK_RESET_TIME
+    if _title_clicks < UNLOCK_CLICKS:
+        return
+    _title_clicks = 0
+    _title_timer = 0.0
+    GameState.debug_unlock_all()
+    UiSfx.play("ui_confirm", -4.0)
+    _toast.text = "全部赛段已解锁"
+    _toast.visible = true
+    _toast_timer = 2.2
