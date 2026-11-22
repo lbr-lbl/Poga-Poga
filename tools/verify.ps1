@@ -46,6 +46,30 @@ if ($LASTEXITCODE -ne 0) {
 	Write-Host ($importOut | Out-String) -ForegroundColor DarkRed
 }
 
+# 1b. 音频资产存在性检查（拟声 / 按键音 / BGM）
+$requiredAudio = @(
+	"assets/sfx/winwin.wav",
+	"assets/sfx/pooo.wav",
+	"assets/sfx/poga.wav",
+	"assets/sfx/ui_click.wav",
+	"assets/sfx/ui_confirm.wav",
+	"assets/sfx/ui_back.wav",
+	"assets/music/forest_theme.ogg"
+)
+Write-Host "==> 音频资产检查" -ForegroundColor Cyan
+foreach ($rel in $requiredAudio) {
+	$full = Join-Path $projectRoot $rel
+	if (-not (Test-Path $full)) {
+		[void]$failures.Add("缺少音频资产：$rel")
+	} elseif ((Get-Item $full).Length -lt 1024) {
+		[void]$failures.Add("音频资产过小（可能生成失败）：$rel")
+	}
+}
+$bgmFile = Join-Path $projectRoot "assets/music/forest_theme.ogg"
+if ((Test-Path $bgmFile) -and (Get-Item $bgmFile).Length -lt 100KB) {
+	[void]$failures.Add("背景音乐文件异常（<100KB）")
+}
+
 # 2. 主场景启动：脚本可解析、输入动作齐全
 Write-Host "==> 主场景无头启动" -ForegroundColor Cyan
 $smokeOut = & $GodotExe --headless --path $projectRoot --quit-after 5 2>&1
@@ -59,7 +83,7 @@ if ($smokeText -match "缺少输入动作") {
 }
 
 # 3. 三关 AI 自动跑（普通难度）
-$levels = @(0, 1, 2)
+$levels = @(0, 1, 2, 3)
 foreach ($level in $levels) {
 	Write-Host "==> 第 $($level + 1) 关自动跑（普通）" -ForegroundColor Cyan
 	$runOut = & $GodotExe --headless --path $projectRoot --fixed-fps 60 -- --autotest --level=$level --tier=1 2>&1
@@ -76,6 +100,9 @@ foreach ($level in $levels) {
 	$statsLine = ($runText -split "`n" | Where-Object { $_ -match "AUTOTEST_STATS" } | Select-Object -First 1)
 	if ($statsLine) {
 		Write-Host "    $($statsLine.Trim())" -ForegroundColor DarkGray
+		if ($level -eq 3 -and $statsLine -match "lead_changes=([0-9]+)" -and [int]$matches[1] -lt 2) {
+			[void]$failures.Add("环法平原赛段没有发生领骑轮换（AI 集团僵住）")
+		}
 		if ($level -eq 0 -and $statsLine -notmatch "eye_coll=[1-9]") {
 			[void]$failures.Add("第 1 关没有发生眼睛碰撞（核心机制未触发）")
 		}

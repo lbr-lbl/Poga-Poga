@@ -39,6 +39,11 @@ func _build_canopies() -> void:
 
 
 func _draw() -> void:
+	if prestart_mode:
+		_draw_prestart_field()
+		return
+	if _leaf_zone_kind.is_empty():
+		_build_leaf_zones()
 	_draw_ground()
 	_draw_canopies()
 	_draw_road()
@@ -46,6 +51,62 @@ func _draw() -> void:
 	_draw_start_line()
 	_draw_debris()
 	_draw_leaves()
+	_draw_terrain_props()
+
+
+func _draw_prestart_field() -> void:
+	# 空场地：一整片深灰地面 + 前方起跑门
+	draw_rect(Rect2(Vector2(-3200.0, -3200.0), Vector2(6400.0, 6400.0)), Color(0.30, 0.30, 0.30))
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 4242
+	for i: int in range(420):
+		var point := Vector2(rng.randf_range(-2600.0, 2600.0), rng.randf_range(-2600.0, 2600.0))
+		draw_rect(Rect2(point, Vector2(5.0, 5.0)), Color(0.26, 0.26, 0.26))
+	# 和游戏内完全一样的黑白格起跑线
+	_draw_start_line()
+	# 空地装饰：稀疏的叶片、草丛、小石块，避免场地太素
+	_draw_field_decor()
+
+
+func _draw_field_decor() -> void:
+	var center := track.point_at(0.0)
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 20261121
+	# 地面上的深色斑块，让空地不单调
+	for i: int in range(14):
+		var patch_pos := center + Vector2.from_angle(rng.randf_range(0.0, TAU)) * rng.randf_range(180.0, 1200.0)
+		draw_circle(patch_pos, rng.randf_range(28.0, 70.0), Color(0.255, 0.255, 0.255, 0.55))
+	for i: int in range(420):
+		var angle := rng.randf_range(0.0, TAU)
+		var distance := rng.randf_range(240.0, 1050.0)
+		var pos := center + Vector2.from_angle(angle) * distance
+		if distance < 300.0:
+			# 起跑线附近只放小草丛/碎石，保持中间空地
+			draw_line(pos, pos + Vector2(2.0, -8.0), Color(0.42, 0.42, 0.42, 0.55), 1.4)
+			continue
+		if i % 3 == 0:
+			var size := rng.randf_range(18.0, 38.0)
+			_draw_leaf({
+				"position": pos,
+				"size": size,
+				"angle": rng.randf_range(0.0, TAU),
+				"width_ratio": 0.34,
+				"collide": false,
+			}, Color(0.62, 0.62, 0.62, 0.55), Color(0.22, 0.22, 0.22, 0.95), 1.4)
+		elif i % 5 == 1:
+			# 小石块
+			var stone := PackedVector2Array([
+				pos + Vector2(-6.0, 0.0), pos + Vector2(-2.0, -5.0),
+				pos + Vector2(5.0, -3.0), pos + Vector2(7.0, 3.0), pos + Vector2(0.0, 6.0),
+			])
+			draw_colored_polygon(stone, Color(0.18, 0.18, 0.18, 0.9))
+			stone.append(stone[0])
+			draw_polyline(stone, Color(0.55, 0.55, 0.55, 0.45), 1.0)
+		else:
+			# 草丛
+			for k: int in range(3):
+				var offset := Vector2(float(k - 1) * 4.0, 0.0)
+				draw_line(pos + offset, pos + offset + Vector2(2.0, -8.0), Color(0.34, 0.34, 0.34, 0.55), 1.5)
 
 
 func _draw_ground() -> void:
@@ -120,18 +181,168 @@ func _draw_slope_zones() -> void:
 	if track.level.slopes.is_empty():
 		return
 	for zone: LevelDef.SlopeZone in track.level.slopes:
-		var color := Color(1.0, 1.0, 1.0, 0.07)
-		if zone.slope < 0.0:
-			color = Color(0.0, 0.0, 0.0, 0.12)
-		var step_ratio := 42.0 / track.length
-		var ratio := zone.from_ratio
-		while ratio < zone.to_ratio:
-			var s := ratio * track.length
+		_draw_slope_strip(zone)
+		_draw_slope_hatching(zone)
+		_draw_slope_arrows(zone)
+		_draw_slope_gate(zone.from_ratio * track.length, zone.slope)
+
+
+## 坡道用“沿路渐变的明暗条带”表现，不再是横线：
+## 上坡铺一层很淡的亮色（像被光照到的高地），下坡铺一层淡暗色（阴影），两端淡出。
+func _draw_slope_strip(zone: LevelDef.SlopeZone) -> void:
+	var start_s: float = zone.from_ratio * track.length
+	var end_s: float = zone.to_ratio * track.length
+	var steps: int = 48
+	var intensity: float = clampf(absf(zone.slope) * 2.4, 0.65, 1.0)
+	var color := Color(0.0, 0.0, 0.0, 0.44 * intensity) if zone.slope < 0.0 else Color(1.0, 1.0, 1.0, 0.52 * intensity)
+	var points := PackedVector2Array()
+	for k: int in range(steps + 1):
+		var t := float(k) / float(steps)
+		var s := lerpf(start_s, end_s, t)
+		var idx := track.index_at(s)
+		points.append(track.samples[idx] + track.normals[idx] * track.half_width)
+	for k: int in range(steps, -1, -1):
+		var t := float(k) / float(steps)
+		var s := lerpf(start_s, end_s, t)
+		var idx := track.index_at(s)
+		points.append(track.samples[idx] - track.normals[idx] * track.half_width)
+	draw_colored_polygon(points, color)
+
+
+func _draw_slope_hatching(zone: LevelDef.SlopeZone) -> void:
+	var start_s: float = zone.from_ratio * track.length
+	var end_s: float = zone.to_ratio * track.length
+	var uphill := zone.slope < 0.0
+	var color := Color(0.02, 0.02, 0.02, 0.24) if uphill else Color(0.02, 0.02, 0.02, 0.18)
+	var s := start_s + 24.0
+	while s < end_s - 24.0:
+		var idx := track.index_at(s)
+		var center := track.samples[idx]
+		var tangent := track.tangents[idx]
+		var normal := track.normals[idx]
+		for offset: float in [-0.55, 0.0, 0.55]:
+			var base := center + normal * track.half_width * offset
+			var tip_a := base - tangent * 9.0 + normal * 12.0 * (1.0 if uphill else -1.0)
+			var tip_b := base + tangent * 9.0 - normal * 12.0 * (1.0 if uphill else -1.0)
+			draw_line(tip_a, tip_b, color, 2.0)
+		s += 52.0
+
+
+## 坡道入口/出口小旗：在两侧路肩画一个小三角，方便提前看到坡道开始。
+func _draw_slope_gate(s: float, slope: float) -> void:
+	var idx := track.index_at(s)
+	var center := track.samples[idx]
+	var normal := track.normals[idx]
+	var color := Color(0.95, 0.95, 0.95, 0.8) if slope < 0.0 else Color(0.10, 0.10, 0.10, 0.8)
+	for side: float in [-1.0, 1.0]:
+		var base := center + normal * track.half_width * side
+		var p1 := base - normal * 10.0 * side
+		var p2 := base + normal * 2.0 * side
+		var p3 := base + normal * 2.0 * side - track.tangents[idx] * 14.0
+		draw_colored_polygon(PackedVector2Array([p1, p2, p3]), color)
+
+
+## 路两侧画小三角箭头指示坡度方向：上坡朝行进方向，下坡朝反方向。
+func _draw_slope_arrows(zone: LevelDef.SlopeZone) -> void:
+	var start_s: float = zone.from_ratio * track.length
+	var end_s: float = zone.to_ratio * track.length
+	var color := Color(0.04, 0.04, 0.04, 0.55)
+	var s := start_s + 30.0
+	while s < end_s - 30.0:
+		for side: float in [-1.0, 1.0]:
 			var idx := track.index_at(s)
-			var center := track.samples[idx]
+			var center := track.samples[idx] + track.normals[idx] * (track.half_width - 24.0) * side
+			var tangent := track.tangents[idx]
 			var normal := track.normals[idx]
-			draw_line(center - normal * track.half_width, center + normal * track.half_width, color, 7.0, false)
-			ratio += step_ratio
+			var direction := tangent if zone.slope < 0.0 else -tangent
+			var tip := center + direction * 8.0
+			var back := center - direction * 7.0
+			var p1 := back + normal * 7.0
+			var p2 := back - normal * 7.0
+			draw_colored_polygon(PackedVector2Array([p1, p2, tip]), color)
+		s += 96.0
+
+
+## 地形分区装饰：林间 → 旷野 → 岩地 → 高地。
+## 只画路肩附近的小道具，让 12km 长赛段沿途有“换了地方”的感觉。
+func _draw_terrain_props() -> void:
+	if track.level.terrain.is_empty():
+		return
+	for zone: LevelDef.TerrainZone in track.level.terrain:
+		var start_s: float = zone.from_ratio * track.length
+		var end_s: float = zone.to_ratio * track.length
+		_draw_terrain_shoulder(zone)
+		# 分区交界的小石柱
+		for boundary: float in [start_s]:
+			var b_idx := track.index_at(boundary)
+			for side: float in [-1.0, 1.0]:
+				var post := track.samples[b_idx] + track.normals[b_idx] * (track.half_width + 10.0) * side
+				draw_rect(Rect2(post - Vector2(3.0, 8.0), Vector2(6.0, 16.0)), Color(0.55, 0.55, 0.55, 0.8))
+				draw_rect(Rect2(post - Vector2(3.0, 8.0), Vector2(6.0, 4.0)), Color(0.9, 0.9, 0.9, 0.9))
+		var s := start_s + 40.0
+		while s < end_s - 40.0:
+			var idx := track.index_at(s)
+			for side: float in [-1.0, 1.0]:
+				var base := track.samples[idx] + track.normals[idx] * (track.half_width + 14.0) * side
+				_draw_terrain_prop(zone.kind, base, track.tangents[idx], track.normals[idx], s)
+			s += 96.0
+
+
+func _draw_terrain_shoulder(zone: LevelDef.TerrainZone) -> void:
+	var color: Color
+	match zone.kind:
+		&"plain":
+			color = Color(0.62, 0.62, 0.62, 0.30)
+		&"rock":
+			color = Color(0.12, 0.12, 0.12, 0.55)
+		&"highland":
+			color = Color(0.85, 0.85, 0.85, 0.22)
+		_:
+			color = Color(0.06, 0.06, 0.06, 0.45)
+	var start_s: float = zone.from_ratio * track.length
+	var end_s: float = zone.to_ratio * track.length
+	var steps := 48
+	for side: float in [-1.0, 1.0]:
+		var points := PackedVector2Array()
+		for k: int in range(steps + 1):
+			var s := lerpf(start_s, end_s, float(k) / float(steps))
+			var idx := track.index_at(s)
+			points.append(track.samples[idx] + track.normals[idx] * track.half_width * side)
+		for k: int in range(steps, -1, -1):
+			var s := lerpf(start_s, end_s, float(k) / float(steps))
+			var idx := track.index_at(s)
+			points.append(track.samples[idx] + track.normals[idx] * (track.half_width + 16.0) * side)
+		draw_colored_polygon(points, color)
+
+
+func _draw_terrain_prop(kind: StringName, base: Vector2, tangent: Vector2, normal: Vector2, s: float) -> void:
+	match kind:
+		&"plain":
+			# 旷野：低矮草丛
+			for k: int in range(3):
+				var offset := normal * (float(k) - 1.0) * 5.0
+				draw_line(base + offset, base + offset - tangent * 9.0 + normal * 4.0, Color(0.45, 0.45, 0.45, 0.55), 1.5)
+		&"rock":
+			# 岩地：路肩石块（深色填充 + 浅色描边）
+			var size := 8.0 + fmod(s, 7.0)
+			var points := PackedVector2Array([
+				base - tangent * size + normal * 2.0,
+				base + normal * size,
+				base + tangent * size,
+				base - normal * size * 0.6,
+			])
+			draw_colored_polygon(points, Color(0.16, 0.16, 0.16, 0.95))
+			var outline := points.duplicate()
+			outline.append(points[0])
+			draw_polyline(outline, Color(0.7, 0.7, 0.7, 0.55), 1.5)
+		&"highland":
+			# 高地：浅色雾气与细枝
+			draw_line(base - normal * 6.0, base + normal * 6.0, Color(0.9, 0.9, 0.9, 0.10), 10.0)
+			draw_line(base, base - tangent * 12.0, Color(0.55, 0.55, 0.55, 0.45), 1.5)
+		_:
+			# 林间：小蘑菇/低矮叶丛
+			draw_circle(base, 3.0, Color(0.55, 0.55, 0.55, 0.55))
+			draw_line(base, base - tangent * 7.0 + normal * 2.0, Color(0.4, 0.4, 0.4, 0.5), 1.2)
 
 
 func _draw_start_line() -> void:
@@ -195,15 +406,54 @@ func _draw_debris() -> void:
 				draw_circle(position - Vector2(visual * 0.22, visual * 0.22), visual * 0.26, Color(0.55, 0.55, 0.55))
 
 func _draw_leaves() -> void:
-	# 外侧叶片先画（暗），贴边叶片后画（亮轮廓），形成层次
+	# 外侧叶片先画（暗），贴边叶片后画（亮轮廓），形成层次；颜色按地形分区微调
+	var index := 0
 	for leaf: Dictionary in track.leaves:
+		var kind: StringName = _leaf_zone_kind[index] if index < _leaf_zone_kind.size() else &"forest"
+		index += 1
 		if leaf["collide"]:
 			continue
-		_draw_leaf(leaf, Color(0.35, 0.35, 0.35, 0.55), Tuning.COLOR_LEAF_FILL, 1.5)
+		_draw_leaf(leaf, _zone_outline(Color(0.35, 0.35, 0.35, 0.55), kind), Tuning.COLOR_LEAF_FILL, 1.5)
+	index = 0
 	for leaf: Dictionary in track.leaves:
+		var kind: StringName = _leaf_zone_kind[index] if index < _leaf_zone_kind.size() else &"forest"
+		index += 1
 		if not leaf["collide"]:
 			continue
-		_draw_leaf(leaf, Color(0.78, 0.78, 0.78), Tuning.COLOR_LEAF_FILL, 1.8)
+		_draw_leaf(leaf, _zone_outline(Color(0.78, 0.78, 0.78), kind), Tuning.COLOR_LEAF_FILL, 1.8)
+
+
+var _leaf_zone_kind: Array[StringName] = []
+## 序章：只画空地和起跑门，不加载赛道/树叶
+var prestart_mode: bool = false
+
+
+func _build_leaf_zones() -> void:
+	_leaf_zone_kind.clear()
+	if track.level.terrain.is_empty():
+		for i: int in range(track.leaves.size()):
+			_leaf_zone_kind.append(&"forest")
+		return
+	for leaf: Dictionary in track.leaves:
+		var ratio: float = fposmod(float(track.nearest(leaf["position"], -1)["s"]) / track.length, 1.0)
+		var kind: StringName = &"forest"
+		for zone: LevelDef.TerrainZone in track.level.terrain:
+			if ratio >= zone.from_ratio and ratio < zone.to_ratio:
+				kind = zone.kind
+				break
+		_leaf_zone_kind.append(kind)
+
+
+func _zone_outline(base: Color, kind: StringName) -> Color:
+	match kind:
+		&"plain":
+			return Color(0.55, 0.55, 0.55, base.a * 0.6)
+		&"rock":
+			return Color(0.70, 0.70, 0.70, base.a * 0.9)
+		&"highland":
+			return Color(0.92, 0.92, 0.92, base.a * 0.8)
+		_:
+			return base
 
 
 func _draw_leaf(leaf: Dictionary, outline: Color, fill: Color, outline_width: float) -> void:

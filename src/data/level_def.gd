@@ -9,32 +9,45 @@ extends Resource
 ## 横向偏移 lateral 以行进方向右手侧为正。
 
 class SlopeZone:
-	extends RefCounted
-	var from_ratio: float
-	var to_ratio: float
-	## -1.0 = 上坡（减速 + 高耗耐），+1.0 = 下坡（加速但转向难）。
-	var slope: float
+    extends RefCounted
+    var from_ratio: float
+    var to_ratio: float
+    ## -1.0 = 上坡（减速 + 高耗耐），+1.0 = 下坡（加速但转向难）。
+    var slope: float
 
-	func _init(p_from: float, p_to: float, p_slope: float) -> void:
-		from_ratio = p_from
-		to_ratio = p_to
-		slope = p_slope
+    func _init(p_from: float, p_to: float, p_slope: float) -> void:
+        from_ratio = p_from
+        to_ratio = p_to
+        slope = p_slope
+
+
+class TerrainZone:
+    extends RefCounted
+    var from_ratio: float
+    var to_ratio: float
+    ## forest / plain / rock / highland，仅影响路边装饰与 HUD 赛段名
+    var kind: StringName
+
+    func _init(p_from: float, p_to: float, p_kind: StringName) -> void:
+        from_ratio = p_from
+        to_ratio = p_to
+        kind = p_kind
 
 
 class Debris:
-	extends RefCounted
-	var s_ratio: float
-	## -1..1，相对路面半宽的横向位置。
-	var lateral: float
-	var radius: float
-	## branch / leaf / pebble，仅影响表现。
-	var kind: StringName
+    extends RefCounted
+    var s_ratio: float
+    ## -1..1，相对路面半宽的横向位置。
+    var lateral: float
+    var radius: float
+    ## branch / leaf / pebble，仅影响表现。
+    var kind: StringName
 
-	func _init(p_s: float, p_lateral: float, p_radius: float, p_kind: StringName = &"branch") -> void:
-		s_ratio = p_s
-		lateral = p_lateral
-		radius = p_radius
-		kind = p_kind
+    func _init(p_s: float, p_lateral: float, p_radius: float, p_kind: StringName = &"branch") -> void:
+        s_ratio = p_s
+        lateral = p_lateral
+        radius = p_radius
+        kind = p_kind
 
 
 @export var id: StringName = &"ring"
@@ -57,19 +70,24 @@ class Debris:
 
 var slopes: Array[SlopeZone] = []
 var debris: Array[Debris] = []
+var terrain: Array[TerrainZone] = []
 
 
 func add_slope(p_from: float, p_to: float, p_slope: float) -> void:
-	slopes.append(SlopeZone.new(p_from, p_to, p_slope))
+    slopes.append(SlopeZone.new(p_from, p_to, p_slope))
 
 
 func add_debris(p_s: float, p_lateral: float, p_radius: float, p_kind: StringName = &"branch") -> void:
-	debris.append(Debris.new(p_s, p_lateral, p_radius, p_kind))
+    debris.append(Debris.new(p_s, p_lateral, p_radius, p_kind))
+
+
+func add_terrain(p_from: float, p_to: float, p_kind: StringName) -> void:
+    terrain.append(TerrainZone.new(p_from, p_to, p_kind))
 
 
 func has_obstacles() -> bool:
-	return not debris.is_empty()
+    return not debris.is_empty()
 
 
 func has_slopes() -> bool:
-	return not slopes.is_empty()
+    return not slopes.is_empty()

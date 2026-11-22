@@ -12,14 +12,16 @@ config_version=5
 
 config/name="Poga Poga"
 config/description="俯视角史莱姆融合竞速 Demo"
+config/version="0.191"
 run/main_scene="res://scenes/main.tscn"
 config/features=PackedStringArray("4.7", "Mobile")
-config/icon="res://icon.svg"
+config/icon="res://icon.png"
 
 [autoload]
 
 InputSetup="*res://src/core/input_setup.gd"
 GameState="*res://src/core/game_state.gd"
+GyroProbe="*res://src/core/gyro_probe.gd"
 
 [debug]
 
@@ -29,8 +31,13 @@ gdscript/warnings/untyped_declaration=1
 
 window/size/viewport_width=1280
 window/size/viewport_height=720
-window/stretch/mode="canvas_items"
+window/stretch/mode="viewport"
 window/stretch/aspect="expand"
+
+[input_devices]
+
+sensors/enable_accelerometer=true
+sensors/enable_gyroscope=true
 
 [physics]
 
@@ -41,4 +48,6 @@ window/stretch/aspect="expand"
 textures/canvas_textures/default_texture_filter=0
 rendering_device/driver.windows="d3d12"
 renderer/rendering_method="mobile"
+renderer/rendering_method.mobile="gl_compatibility"
+textures/vram_compression/import_etc2_astc=true
 environment/defaults/default_clear_color=Color(0.0431373, 0.0509804, 0.0392157, 1)
